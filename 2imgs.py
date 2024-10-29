@@ -5,16 +5,20 @@ class PanoramaStitcher:
     def __init__(self, img1, img2):
         self.left = cv2.imread(img1)
         self.right = cv2.imread(img2)
-        self.orb = cv2.ORB_create()
-        self.bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        self.sift = cv2.SIFT_create()  # Use SIFT for better feature detection
+        self.bf = cv2.BFMatcher()
 
     def detect_and_compute(self, image):
-        kp, des = self.orb.detectAndCompute(image, None)
+        kp, des = self.sift.detectAndCompute(image, None)
         return kp, des
 
     def match_descriptors(self, des1, des2):
-        matches = self.bf.match(des1, des2)
-        best = sorted(matches, key = lambda x:x.distance)[:30]
+        matches = self.bf.knnMatch(des1, des2, k=2)
+        # Apply ratio test as per Lowe's paper
+        best = []
+        for m, n in matches:
+            if m.distance < 0.75 * n.distance:
+                best.append(m)
         return best
 
     def find_points(self, matches, kp1, kp2):
@@ -33,22 +37,16 @@ class PanoramaStitcher:
         best_matches = self.match_descriptors(des_left, des_right)
         left_pts, right_pts = self.find_points(best_matches, kp_left, kp_right)
 
-        M, _ = cv2.findHomography(np.float32(right_pts), np.float32(left_pts))
+        M, mask = cv2.findHomography(np.float32(right_pts), np.float32(left_pts), cv2.RANSAC, 5.0)
         dim_x = self.left.shape[1] + self.right.shape[1]
         dim_y = max(self.left.shape[0], self.right.shape[0])
-        dim = (dim_x, dim_y)
+        result = cv2.warpPerspective(self.right, M, (dim_x, dim_y))
+        result[:self.left.shape[0], :self.left.shape[1]] = self.left
 
-        warped = cv2.warpPerspective(self.right, M, dim)
-        comb = warped.copy()
-        comb[0:self.left.shape[0],0:self.left.shape[1]] = self.left
-        gray = cv2.cvtColor(comb, cv2.COLOR_BGR2GRAY)
-        non_black_pixels_mask = gray>0
-        (x, y) = np.where(non_black_pixels_mask)
-        (topx, topy) = (np.min(x), np.min(y))
-        (bottomx, bottomy) = (np.max(x), np.max(y))
-        cropped = comb[topx:bottomx+1, topy:bottomy+1]
+        # Use a multi-band blending technique for seamless transition (optional)
+        # This step needs an additional implementation of a blending function
 
-        cv2.imwrite('stitched2imgs.jpg', cropped)
+        cv2.imwrite('stitched2imgs_2.jpg', result)
 
 if __name__ == "__main__":
     import sys
